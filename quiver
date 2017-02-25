@@ -27,8 +27,8 @@ FileUtils.mkdir_p(output_path)
 def output_path(output_path, notebook_meta, note_meta)
   File.join(
     output_path,
-    notebook_meta['name'].gsub(/\s+/, '_').downcase,
-    note_meta['title'].gsub(/\s+/, '_').downcase + '.md'
+    notebook_meta['name'],
+    note_meta['title'] + '.md'
   )
 end
 
