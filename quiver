@@ -16,6 +16,14 @@ raise QuiverFileNotFoundError, "#{quiver_path} did not exist" unless Dir.exist?(
 output_path = ARGV[1]
 raise 'Must provide output path as second argument' if output_path.nil?
 
+# Clean and Sanitize the output
+# Don't just rm_rf the folder as this will delete the git entries
+Dir.entries(output_path).each do |entry|
+  next if entry.start_with?('.')
+  FileUtils.rm_rf(File.join(output_path, entry))
+end
+FileUtils.mkdir_p(output_path)
+
 def output_path(output_path, notebook_meta, note_meta)
   File.join(
     output_path,
@@ -100,5 +108,21 @@ else
   raise 'Invalid entry. The path #{quiver_path} was not a qvlibrary or qbnotebook'
 end
 
+# The main Table of Contents
 toc = "Table Of Contents\n---\n" + generate_toc(output_path, output_path).join("\n")
 File.write("#{output_path}/README.md", toc)
+
+# Subfolder Table of Contents
+Dir["#{output_path}/**/*"].each do |dir|
+  next unless File.directory?(dir)
+  sub_toc = "Table Of Contents\n---\n" + generate_toc(dir, dir).join("\n")
+
+  # Take into account the current README
+  current_readme = File.exist?("#{dir}/README.md") ? File.readlines("#{dir}/README.md") : []
+  unless current_readme.empty?
+    title = current_readme[0..2] # First 2 lines are always the title
+    content = current_readme[2..-1] # The rest is the content
+    sub_toc = [title, sub_toc, content].join("\n")
+  end
+  File.write("#{dir}/README.md", sub_toc)
+end
