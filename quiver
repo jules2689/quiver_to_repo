@@ -1,0 +1,104 @@
+#!/usr/bin/ruby
+# rubocop:disable Metrics/LineLength
+
+require 'fileutils'
+require 'json'
+
+class QuiverFileNotFoundError < StandardError; end
+DEFAULT_BOOK_UUIDS = %w(Inbox Trash Tutorial).freeze
+
+# Load the Quiver Library
+quiver_path = ARGV[0]
+raise 'Must provide path to Quiver library' if quiver_path.nil?
+raise QuiverFileNotFoundError, "#{quiver_path} did not exist" unless Dir.exist?(quiver_path)
+
+# Make sure we have a path to output to
+output_path = ARGV[1]
+raise 'Must provide output path as second argument' if output_path.nil?
+
+def output_path(output_path, notebook_meta, note_meta)
+  File.join(
+    output_path,
+    notebook_meta['name'].gsub(/\s+/, '_').downcase,
+    note_meta['title'].gsub(/\s+/, '_').downcase + '.md'
+  )
+end
+
+def parse_content(title, content)
+  title = "#{title}\n==="
+  page_content = content['cells'].collect do |cell|
+    case cell['type']
+    when 'markdown', 'text'
+      cell['data']
+    when 'code'
+      "```#{cell['language']}\n#{cell['data']}\n```"
+    when 'latex'
+      'LATEX'
+    when 'diagram'
+      'DIAGRAM'
+    end
+  end.join
+  title + "\n" + page_content
+end
+
+def parse_note(output_path, notebook_meta, note_path)
+  meta_path = File.join(note_path, 'meta.json')
+  raise QuiverFileNotFoundError, "#{note_path} did not contain a meta.json file" unless File.exist?(meta_path)
+
+  content_path = File.join(note_path, 'content.json')
+  raise QuiverFileNotFoundError, "#{note_path} did not contain a content.json file" unless File.exist?(content_path)
+
+  meta = JSON.parse(File.read(meta_path))
+  path = output_path(output_path, notebook_meta, meta)
+  content = parse_content(meta['title'], JSON.parse(File.read(content_path)))
+
+  puts "Writing #{path}..."
+  FileUtils.mkpath(File.dirname(path))
+  File.write(path, content)
+end
+
+def parse_notebook(output_path, notebook_path)
+  # Check for meta.json
+  meta_path = File.join(notebook_path, 'meta.json')
+  raise QuiverFileNotFoundError, "#{notebook_path} did not contain a meta.json file" unless File.exist?(meta_path)
+
+  # Skip any default notebooks
+  meta_json = JSON.parse(File.read(meta_path))
+  return if DEFAULT_BOOK_UUIDS.include?(meta_json['uuid'])
+
+  # Parse all notes
+  Dir["#{notebook_path}/*.qvnote"].each { |note_path| parse_note(output_path, meta_json, note_path) }
+end
+
+def generate_toc(output_path, base_path, depth = 0)
+  toc = []
+  Dir["#{base_path}/*"].each do |dir|
+    # We don't need to track READMEs, those are handlded by default
+    next if dir.end_with?('/README.md')
+    path = dir.gsub(output_path + '/', '')
+
+    # If we're at a markdown file, don't recurse, just add it
+    if File.extname(dir) == '.md'
+      title = File.readlines(dir).first.strip
+      toc << "#{' ' * depth}- [#{title}](#{path})"
+    # Otherwise, we'll need to add the title and recurse the subfolder
+    else
+      toc << "#{' ' * depth}- [#{path}](#{path})"
+      toc += generate_toc(output_path, dir, depth + 1)
+    end
+  end
+  toc
+end
+
+# Find all notebooks in the library and output a table of contents
+case File.extname(quiver_path)
+when '.qvnotebook'
+  parse_notebook(output_path, quiver_path)
+when '.qvlibrary'
+  Dir["#{quiver_path}/*.qvnotebook"].each { |notebook_path| parse_notebook(output_path, notebook_path) }
+else
+  raise 'Invalid entry. The path #{quiver_path} was not a qvlibrary or qbnotebook'
+end
+
+toc = "Table Of Contents\n---\n" + generate_toc(output_path, output_path).join("\n")
+File.write("#{output_path}/README.md", toc)
